@@ -205,71 +205,72 @@ with tab_q:
 
 with tab_r:
     st.subheader("✏️ Registrar respuestas")
-    st.caption("Escribe el número de pregunta, selecciona tu respuesta y presiona **Registrar**.")
 
-    # ── Formulario de ingreso ─────────────────────────────────────────────────
-    with st.container(border=True):
-        c1, c2, c3 = st.columns([2, 2, 1])
-        with c1:
-            num_inp = st.number_input(
-                "Número de pregunta",
-                min_value=1, max_value=n_total, step=1,
-                key="inp_num",
-            )
-        with c2:
-            resp_inp = st.selectbox("Respuesta", ["A", "B", "C", "D"], key="inp_resp")
-        with c3:
-            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-            if st.button("✔ Registrar", use_container_width=True, type="primary"):
-                st.session_state['respuestas'][int(num_inp) - 1] = resp_inp
-                st.rerun()
+    # ── Paso 1: cargar CSV de preguntas ───────────────────────────────────────
+    uploaded = st.file_uploader(
+        "📂 Carga el CSV de preguntas (generado en la pestaña **📋 Preguntas**)",
+        type="csv",
+        key="csv_preguntas",
+    )
 
-    # ── Tabla de respuestas registradas (solo lectura) ────────────────────────
-    n_respon = len(respuestas)
-    st.markdown(f"**Progreso: {n_respon} / {n_total}**")
-    st.progress(n_respon / n_total if n_total else 0)
+    if uploaded is None:
+        st.info("Sube el CSV de preguntas para comenzar a registrar tus respuestas.")
+        n_respon = len(respuestas)
+    else:
+        # ── Paso 2: construir tabla editable ──────────────────────────────────
+        try:
+            df_csv = pd.read_csv(uploaded)
+            df_csv.columns = [c.strip() for c in df_csv.columns]
+        except Exception as e:
+            st.error(f"No se pudo leer el CSV: {e}")
+            st.stop()
 
-    if respuestas:
-        entries = []
-        for idx in sorted(respuestas.keys()):
-            row = prueba.iloc[idx]
-            entries.append({
-                'Nº':           idx + 1,
-                'Área':         AREA_LABEL[row['AREA']],
-                'Sesión':       str(row['SESION']),
-                'Pregunta':     str(row['PREGUNTA']),
-                'Tu Respuesta': respuestas[idx],
-            })
-        st.dataframe(
-            pd.DataFrame(entries),
-            use_container_width=True,
+        for col in ['Nº', 'Sesión', 'Pregunta']:
+            if col not in df_csv.columns:
+                st.error(f"El CSV no tiene la columna **{col}**. ¿Subiste el archivo correcto?")
+                st.stop()
+
+        df_csv['Tu Respuesta'] = [
+            respuestas.get(int(row['Nº']) - 1, None)
+            for _, row in df_csv.iterrows()
+        ]
+
+        edited = st.data_editor(
+            df_csv,
+            column_config={
+                c: st.column_config.TextColumn(c, disabled=True)
+                for c in df_csv.columns if c != 'Tu Respuesta'
+            } | {
+                'Tu Respuesta': st.column_config.SelectboxColumn(
+                    'Tu Respuesta',
+                    options=['A', 'B', 'C', 'D'],
+                    required=False,
+                    width='medium',
+                )
+            },
             hide_index=True,
-            height=min(60 + 35 * len(entries), 500),
+            use_container_width=True,
+            height=min(60 + 35 * len(df_csv), 600),
+            key='editor_respuestas',
         )
 
-        # ── Eliminar / corregir ───────────────────────────────────────────────
-        with st.expander("🗑️ Eliminar una respuesta"):
-            cd1, cd2 = st.columns([3, 1])
-            with cd1:
-                del_num = st.number_input(
-                    "Número de pregunta a eliminar",
-                    min_value=1, max_value=n_total, step=1,
-                    key="del_num",
-                )
-            with cd2:
-                st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-                if st.button("🗑️ Eliminar", use_container_width=True):
-                    idx_del = int(del_num) - 1
-                    if idx_del in st.session_state['respuestas']:
-                        del st.session_state['respuestas'][idx_del]
-                        st.rerun()
-                    else:
-                        st.warning(f"La pregunta {del_num} no tiene respuesta registrada.")
-    else:
-        st.info("Aún no has registrado ninguna respuesta.")
+        for _, row in edited.iterrows():
+            idx = int(row['Nº']) - 1
+            val = row['Tu Respuesta']
+            if val and val in ['A', 'B', 'C', 'D']:
+                st.session_state['respuestas'][idx] = val
+            elif not val and idx in st.session_state['respuestas']:
+                del st.session_state['respuestas'][idx]
+
+        respuestas = st.session_state['respuestas']
+        n_respon   = len(respuestas)
+
+        st.markdown(f"**Progreso: {n_respon} / {n_total}**")
+        st.progress(n_respon / n_total if n_total else 0)
 
     # ── Botón calificar ───────────────────────────────────────────────────────
     st.divider()
+    n_respon  = len(st.session_state.get('respuestas', {}))
     faltantes = n_total - n_respon
     if faltantes > 0:
         st.warning(f"⚠️ Faltan **{faltantes}** respuesta(s) para poder calificar.")
