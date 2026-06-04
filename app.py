@@ -354,6 +354,8 @@ with tab_result:
     else:
         r = st.session_state['resultado']
 
+        st.success("✅ Simulacro calificado correctamente")
+
         # ── Tiempo ────────────────────────────────────────────────────────────
         st.subheader("⏱️ Tiempo")
         tc1, tc2, tc3 = st.columns(3)
