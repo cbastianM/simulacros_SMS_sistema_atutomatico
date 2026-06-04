@@ -153,6 +153,14 @@ tab_q, tab_r, tab_result = st.tabs([
     "📊 Resultados",
 ])
 
+# Scroll automático a resultados tras calificar
+if st.session_state.get('ir_a_resultados'):
+    st.session_state['ir_a_resultados'] = False
+    st.markdown(
+        "<script>document.querySelectorAll('[data-baseweb=tab]')[2].click()</script>",
+        unsafe_allow_html=True,
+    )
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 1 — PREGUNTAS (texto plano)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,28 +285,15 @@ with tab_r:
     if faltantes > 0:
         st.warning(f"⚠️ Faltan **{faltantes}** respuesta(s) para poder calificar.")
 
-    if st.button(
+    calificar = st.button(
         "📊 Calificar",
         use_container_width=True,
         type="primary",
         disabled=(faltantes > 0),
         key="btn_calificar",
-    ):
-        st.session_state['confirmar_calificar'] = True
+    )
 
-    confirmar = False
-    if st.session_state.get('confirmar_calificar') and faltantes == 0:
-        st.warning("¿Estás seguro de que quieres calificar? Revisa que todas tus respuestas estén correctas.")
-        col_si, col_no = st.columns(2)
-        with col_si:
-            confirmar = st.button("✅ Sí, calificar", use_container_width=True, type="primary", key="btn_si")
-        with col_no:
-            if st.button("❌ Cancelar", use_container_width=True, key="btn_no"):
-                st.session_state["confirmar_calificar"] = False
-                st.rerun()
-
-    if st.session_state.get('confirmar_calificar') and faltantes == 0 and confirmar:
-        st.session_state["confirmar_calificar"] = False
+    if calificar and faltantes == 0:
         fin      = datetime.now()
         duracion = fin - inicio
         minutos  = int(duracion.total_seconds() // 60)
@@ -346,6 +341,7 @@ with tab_r:
             'minutos':    minutos,
             'segundos':   segundos,
         }
+        st.session_state['ir_a_resultados'] = True
         st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
