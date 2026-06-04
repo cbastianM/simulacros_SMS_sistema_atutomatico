@@ -5,13 +5,15 @@ from datetime import datetime
 
 st.set_page_config(page_title="ICFES Grader Pro", layout="wide", initial_sidebar_state="expanded")
 
+# ── Constantes ────────────────────────────────────────────────────────────────
+
 AREA_CODES = ['M', 'L', 'S', 'N', 'I']
 
 AREA_LABEL = {
     'M': '🔢 Matemáticas',
-    'L': '📖 Lectura',
-    'S': '🌍 Sociales',
-    'N': '🔬 Naturales',
+    'L': '📖 Lectura Crítica',
+    'S': '🌍 Sociales y Ciudadanas',
+    'N': '🔬 Ciencias Naturales',
     'I': '🇬🇧 Inglés',
 }
 
@@ -22,12 +24,10 @@ NIVELES = {
     4: {"label": "Nivel 4 — 30 preguntas por materia  (150 en total)", "n": 30},
 }
 
-st.title("📝 Calificador ICFES Pro")
-
-# ── helpers ──────────────────────────────────────────────────────────────────
-
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 SIMULACROS_DIR = os.path.join(BASE_DIR, "SIMULACROS")
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 @st.cache_data
 def list_simulacros():
@@ -51,7 +51,15 @@ def score_class(pct):
     if pct >= 60: return "yellow", "👍 BUENO"
     return "red", "📚 NECESITA MEJORAR"
 
-# ── sidebar ───────────────────────────────────────────────────────────────────
+def init_respuestas():
+    if 'respuestas' not in st.session_state:
+        st.session_state['respuestas'] = {}
+
+# ── Título ────────────────────────────────────────────────────────────────────
+
+st.title("📝 Calificador ICFES Pro")
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.header("⚙️ Configuración")
@@ -66,24 +74,33 @@ with st.sidebar:
     nivel = st.radio(
         "Nivel de dificultad",
         options=list(NIVELES.keys()),
-        format_func=lambda k: NIVELES[k]["label"]
+        format_func=lambda k: NIVELES[k]["label"],
     )
     n_por_materia = NIVELES[nivel]["n"]
 
     generar = st.button("🎲 Generar Prueba", use_container_width=True, type="primary")
 
-# ── generar prueba ────────────────────────────────────────────────────────────
+    # Indicador de progreso si hay prueba activa
+    if 'prueba' in st.session_state:
+        prueba_sidebar = st.session_state['prueba']
+        respuestas_sidebar = st.session_state.get('respuestas', {})
+        n_tot = len(prueba_sidebar)
+        n_res = len(respuestas_sidebar)
+        st.divider()
+        st.metric("Progreso", f"{n_res} / {n_tot}", f"{n_res/n_tot*100:.0f}%" if n_tot else "0%")
+        pct_prog = n_res / n_tot if n_tot else 0
+        st.progress(pct_prog)
+
+# ── Generar prueba ────────────────────────────────────────────────────────────
 
 df_full = load_simulacro(sel_sim)
 
-# Verificar que el simulacro tiene todas las áreas requeridas
 areas_presentes = df_full['AREA'].unique().tolist()
 areas_faltantes = [a for a in AREA_CODES if a not in areas_presentes]
 if areas_faltantes:
     st.error(f"El simulacro '{sel_sim}' no tiene las áreas: {', '.join(areas_faltantes)}")
     st.stop()
 
-# Inicializar prueba en session_state
 if generar:
     muestras = []
     avisos   = []
@@ -95,158 +112,311 @@ if generar:
         muestra = pool.sample(n, random_state=None).reset_index(drop=True)
         muestras.append(muestra)
 
-    st.session_state['prueba']    = pd.concat(muestras, ignore_index=True)
-    st.session_state['resultado'] = None
-    st.session_state['simulacro'] = sel_sim
-    st.session_state['nivel']     = nivel
-    st.session_state['inicio']    = datetime.now()
+    st.session_state['prueba']     = pd.concat(muestras, ignore_index=True)
+    st.session_state['respuestas'] = {}   # ← se limpian al generar nueva prueba
+    st.session_state['resultado']  = None
+    st.session_state['simulacro']  = sel_sim
+    st.session_state['nivel']      = nivel
+    st.session_state['inicio']     = datetime.now()
 
-    if avisos:
-        for a in avisos:
-            st.warning(a)
+    for a in avisos:
+        st.warning(a)
 
-# ── mostrar prueba ─────────────────────────────────────────────────────────────
+# ── Guardia: sin prueba activa ────────────────────────────────────────────────
 
 if 'prueba' not in st.session_state:
     st.info("👈 Configura el nivel y presiona **Generar Prueba** para comenzar.")
     st.stop()
 
 prueba: pd.DataFrame = st.session_state['prueba']
-prueba.columns = [c.strip().upper() for c in prueba.columns]
+init_respuestas()
+respuestas: dict = st.session_state['respuestas']
 
-inicio = st.session_state.get('inicio', datetime.now())
-st.info(f"📚 **Simulacro:** {st.session_state['simulacro']}  |  🎯 **Nivel:** {st.session_state['nivel']}  |  ❓ **Preguntas:** {len(prueba)}  |  🕐 **Inicio:** {inicio.strftime('%H:%M:%S')}")
+inicio   = st.session_state.get('inicio', datetime.now())
+n_total  = len(prueba)
+n_respon = len(respuestas)
 
-st.subheader("📋 Ingresa tus respuestas (A / B / C / D)")
-st.caption("Puedes editar directamente en la tabla.")
-
-# Construir tabla editable
-tabla = pd.DataFrame({
-    'Área':         prueba['AREA'].map(AREA_LABEL),
-    'Sesión':       prueba['SESION'].astype(str),
-    'Pregunta':     prueba['PREGUNTA'].astype(str),
-    'Tu Respuesta': [""] * len(prueba),
-})
-
-edited = st.data_editor(
-    tabla,
-    column_config={
-        "Área":         st.column_config.TextColumn("Área",     disabled=True),
-        "Sesión":       st.column_config.TextColumn("Sesión",   disabled=True),
-        "Pregunta":     st.column_config.TextColumn("Pregunta", disabled=True),
-        "Tu Respuesta": st.column_config.SelectboxColumn(
-            "Tu Respuesta",
-            options=["A", "B", "C", "D"],
-            required=False,
-        ),
-    },
-    hide_index=True,
-    use_container_width=True,
-    height=min(60 + 35 * len(prueba), 600),
-    key="editor"
+# Banner de estado
+st.info(
+    f"📚 **Simulacro:** {st.session_state['simulacro']}  |  "
+    f"🎯 **Nivel:** {st.session_state['nivel']}  |  "
+    f"❓ **Preguntas:** {n_total}  |  "
+    f"✏️ **Respondidas:** {n_respon}/{n_total}  |  "
+    f"🕐 **Inicio:** {inicio.strftime('%H:%M:%S')}"
 )
 
-# ── calificar ──────────────────────────────────────────────────────────────────
+# ── Tabs ───────────────────────────────────────────────────────────────────────
 
-st.divider()
-col_l, col_c, col_r = st.columns([1, 1, 1])
-with col_c:
-    calificar = st.button("📊 Calificar", use_container_width=True, type="primary")
+tab_q, tab_r, tab_result = st.tabs([
+    "📋 Preguntas",
+    "✏️ Mis Respuestas",
+    "📊 Resultados",
+])
 
-if calificar:
-    vacias = edited['Tu Respuesta'].isna() | (edited['Tu Respuesta'].str.strip() == "")
-    if vacias.any():
-        st.warning(f"⚠️ Faltan {vacias.sum()} respuesta(s) por completar.")
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 1 — PREGUNTAS (texto plano)
+# ─────────────────────────────────────────────────────────────────────────────
+
+with tab_q:
+    st.subheader("📋 Preguntas de tu prueba")
+    st.caption(
+        "Este es el listado de las preguntas que te tocaron. "
+        "Resuélvelas en tu cuadernillo y luego registra tus respuestas en la pestaña **✏️ Mis Respuestas**."
+    )
+
+    for a in AREA_CODES:
+        mask    = prueba['AREA'] == a
+        indices = prueba.index[mask].tolist()   # índices 0-based en `prueba`
+        if not indices:
+            continue
+
+        subset = prueba.loc[indices]
+        st.markdown(f"### {AREA_LABEL[a]}")
+
+        # Cabecera de columnas
+        col_n, col_s, col_p, col_resp = st.columns([1, 2, 2, 2])
+        col_n.markdown("**Nº**")
+        col_s.markdown("**Sesión**")
+        col_p.markdown("**Pregunta**")
+        col_resp.markdown("**Registrada**")
+
+        for idx in indices:
+            row  = prueba.loc[idx]
+            num  = idx + 1                                   # número 1-based para el usuario
+            resp = respuestas.get(idx, "—")
+            col_n, col_s, col_p, col_resp = st.columns([1, 2, 2, 2])
+            col_n.write(f"**{num}**")
+            col_s.write(str(row['SESION']))
+            col_p.write(str(row['PREGUNTA']))
+            if resp == "—":
+                col_resp.write("—")
+            else:
+                col_resp.markdown(
+                    f"<span style='color:#1976D2;font-weight:bold'>{resp}</span>",
+                    unsafe_allow_html=True,
+                )
+
+        st.divider()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 2 — MIS RESPUESTAS
+# ─────────────────────────────────────────────────────────────────────────────
+
+with tab_r:
+    st.subheader("✏️ Registrar respuestas")
+    st.caption(
+        "Ingresa el número de pregunta y tu respuesta. "
+        "Puedes hacerlo en cualquier orden y en cualquier momento — "
+        "tus respuestas se guardan aunque refresques la página (mientras la sesión esté activa)."
+    )
+
+    # ── Formulario de ingreso ─────────────────────────────────────────────────
+    with st.container(border=True):
+        st.markdown("##### ➕ Nueva respuesta")
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            num_inp = st.number_input(
+                "Número de pregunta",
+                min_value=1, max_value=n_total, step=1,
+                key="inp_num",
+                help=f"Entre 1 y {n_total}",
+            )
+        with c2:
+            resp_inp = st.selectbox(
+                "Respuesta",
+                ["A", "B", "C", "D"],
+                key="inp_resp",
+            )
+        with c3:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            agregar = st.button("✔ Registrar", use_container_width=True, type="primary")
+
+    if agregar:
+        st.session_state['respuestas'][int(num_inp) - 1] = resp_inp
+        st.rerun()
+
+    # ── Tabla de respuestas registradas ──────────────────────────────────────
+    st.markdown(f"**Progreso: {n_respon}/{n_total}**")
+    st.progress(n_respon / n_total if n_total else 0)
+
+    if respuestas:
+        entries = []
+        for idx in sorted(respuestas.keys()):
+            row = prueba.iloc[idx]
+            entries.append({
+                'Nº':           idx + 1,
+                'Área':         AREA_LABEL[row['AREA']],
+                'Sesión':       str(row['SESION']),
+                'Pregunta':     str(row['PREGUNTA']),
+                'Tu Respuesta': respuestas[idx],
+            })
+        df_resp = pd.DataFrame(entries)
+        st.dataframe(df_resp, use_container_width=True, hide_index=True, height=min(60 + 35 * len(entries), 500))
+
+        # ── Borrar una respuesta ──────────────────────────────────────────────
+        with st.expander("🗑️ Eliminar o corregir una respuesta"):
+            cd1, cd2 = st.columns([3, 1])
+            with cd1:
+                del_num = st.number_input(
+                    "Número de pregunta a eliminar",
+                    min_value=1, max_value=n_total, step=1,
+                    key="del_num",
+                )
+            with cd2:
+                st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+                eliminar = st.button("🗑️ Eliminar", use_container_width=True)
+
+            if eliminar:
+                idx_del = int(del_num) - 1
+                if idx_del in st.session_state['respuestas']:
+                    del st.session_state['respuestas'][idx_del]
+                    st.success(f"Respuesta de la pregunta {del_num} eliminada.")
+                    st.rerun()
+                else:
+                    st.warning(f"La pregunta {del_num} no tiene respuesta registrada.")
     else:
+        st.info("Aún no has registrado ninguna respuesta.")
+
+    # ── Botón calificar ───────────────────────────────────────────────────────
+    st.divider()
+    faltantes = n_total - n_respon
+    if faltantes > 0:
+        st.warning(f"⚠️ Faltan **{faltantes}** respuesta(s) para poder calificar.")
+
+    calificar = st.button(
+        "📊 Calificar",
+        use_container_width=True,
+        type="primary",
+        disabled=(faltantes > 0),
+        key="btn_calificar",
+    )
+
+    if calificar and faltantes == 0:
         fin      = datetime.now()
-        inicio   = st.session_state.get('inicio', fin)
         duracion = fin - inicio
         minutos  = int(duracion.total_seconds() // 60)
         segundos = int(duracion.total_seconds() % 60)
 
-        respuestas_est = edited['Tu Respuesta'].str.upper().str.strip().values
-        respuestas_cor = prueba['RESPUESTA'].values
-        correctas_bool = respuestas_est == respuestas_cor
+        respuestas_est = [respuestas[i] for i in range(n_total)]
+        respuestas_cor = prueba['RESPUESTA'].tolist()
+        correctas_bool = [r == c for r, c in zip(respuestas_est, respuestas_cor)]
 
-        # Tabla de resultados completa
-        resultados_df = pd.DataFrame({
-            'Área':     prueba['AREA'].map(AREA_LABEL),
-            'Sesión':   prueba['SESION'].astype(str),
-            'Pregunta': prueba['PREGUNTA'].astype(str),
-            'Diste':    respuestas_est,
-            'Correcta': respuestas_cor,
-            'Estado':   ['✓' if c else '✗' for c in correctas_bool],
-        })
-
-        # ── Score global
-        total    = len(prueba)
-        aciertos = int(correctas_bool.sum())
+        total    = n_total
+        aciertos = sum(correctas_bool)
         pct_total = aciertos / total * 100
         css, label = score_class(pct_total)
 
-        # Tiempo
+        # Tabla detalle
+        resultados_df = pd.DataFrame({
+            'Área':         prueba['AREA'].map(AREA_LABEL),
+            'Sesión':       prueba['SESION'].astype(str),
+            'Pregunta':     prueba['PREGUNTA'].astype(str),
+            'Diste':        respuestas_est,
+            'Correcta':     respuestas_cor,
+            'Estado':       ['✓' if c else '✗' for c in correctas_bool],
+        })
+
+        # Por área
+        area_stats = {}
+        for a in AREA_CODES:
+            mask   = prueba['AREA'] == a
+            indices = prueba.index[mask].tolist()
+            ok_m   = sum(correctas_bool[i] for i in indices)
+            tot_m  = len(indices)
+            area_stats[a] = {'ok': ok_m, 'tot': tot_m, 'pct': ok_m/tot_m*100 if tot_m else 0}
+
+        # Guardar en session_state para mostrar en tab resultados
+        st.session_state['resultado'] = {
+            'total':      total,
+            'aciertos':   aciertos,
+            'pct':        pct_total,
+            'css':        css,
+            'label':      label,
+            'detalle':    resultados_df,
+            'area_stats': area_stats,
+            'inicio':     inicio,
+            'fin':        fin,
+            'minutos':    minutos,
+            'segundos':   segundos,
+        }
+        st.rerun()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 3 — RESULTADOS
+# ─────────────────────────────────────────────────────────────────────────────
+
+with tab_result:
+    if 'resultado' not in st.session_state or st.session_state['resultado'] is None:
+        st.info("Completa todas las respuestas y presiona **📊 Calificar** en la pestaña anterior.")
+    else:
+        r = st.session_state['resultado']
+
+        # ── Tiempo ────────────────────────────────────────────────────────────
         st.subheader("⏱️ Tiempo")
         tc1, tc2, tc3 = st.columns(3)
-        tc1.metric("Inicio",       inicio.strftime('%H:%M:%S'))
-        tc2.metric("Fin",          fin.strftime('%H:%M:%S'))
-        tc3.metric("Duración",     f"{minutos}m {segundos}s")
+        tc1.metric("Inicio",   r['inicio'].strftime('%H:%M:%S'))
+        tc2.metric("Fin",      r['fin'].strftime('%H:%M:%S'))
+        tc3.metric("Duración", f"{r['minutos']}m {r['segundos']}s")
 
         st.divider()
 
-        if css == "green":
-            st.success(f"{label} — {pct_total:.1f}%  ({aciertos}/{total} correctas)")
-        elif css == "yellow":
-            st.warning(f"{label} — {pct_total:.1f}%  ({aciertos}/{total} correctas)")
+        # ── Puntaje global ────────────────────────────────────────────────────
+        if r['css'] == "green":
+            st.success(f"{r['label']} — {r['pct']:.1f}%  ({r['aciertos']}/{r['total']} correctas)")
+        elif r['css'] == "yellow":
+            st.warning(f"{r['label']} — {r['pct']:.1f}%  ({r['aciertos']}/{r['total']} correctas)")
         else:
-            st.error(f"{label} — {pct_total:.1f}%  ({aciertos}/{total} correctas)")
+            st.error(f"{r['label']} — {r['pct']:.1f}%  ({r['aciertos']}/{r['total']} correctas)")
 
-        # ── Score por área
+        # ── Por área ──────────────────────────────────────────────────────────
         st.subheader("📊 Resultados por área")
         cols = st.columns(len(AREA_CODES))
         for i, a in enumerate(AREA_CODES):
-            mask  = prueba['AREA'] == a
-            tot_m = int(mask.sum())
-            ok_m  = int(correctas_bool[mask].sum())
-            pct_m = ok_m / tot_m * 100 if tot_m else 0
-            cols[i].metric(AREA_LABEL[a], f"{ok_m}/{tot_m}", f"{pct_m:.0f}%")
+            s = r['area_stats'][a]
+            cols[i].metric(AREA_LABEL[a], f"{s['ok']}/{s['tot']}", f"{s['pct']:.0f}%")
 
-        # ── Detalle
+        # ── Detalle ───────────────────────────────────────────────────────────
         st.subheader("📋 Detalle pregunta a pregunta")
 
         def color_estado(val):
             return 'color:#0caf00;font-weight:bold' if val == '✓' else 'color:#d32f2f;font-weight:bold'
 
         st.dataframe(
-            resultados_df.style.applymap(color_estado, subset=['Estado']),
+            r['detalle'].style.map(color_estado, subset=['Estado']),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
         )
 
-        # ── Descargar
+        # ── Descargas ─────────────────────────────────────────────────────────
         st.divider()
-        c1, c2 = st.columns(2)
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        with c1:
-            resumen = pd.DataFrame([{
-                'Simulacro':  sel_sim,
-                'Nivel':      nivel,
-                'Correctas':  aciertos,
-                'Total':      total,
-                'Porcentaje': f'{pct_total:.1f}%',
-                'Inicio':     inicio.strftime('%d/%m/%Y %H:%M:%S'),
-                'Fin':        fin.strftime('%d/%m/%Y %H:%M:%S'),
-                'Duración':   f'{minutos}m {segundos}s',
-            }])
-            st.download_button("📄 Descargar Resumen",
-                               resumen.to_csv(index=False),
-                               f"resumen_{sel_sim}_N{nivel}_{ts}.csv",
-                               "text/csv")
-        with c2:
-            st.download_button("📊 Descargar Detalle",
-                               resultados_df.to_csv(index=False),
-                               f"detalle_{sel_sim}_N{nivel}_{ts}.csv",
-                               "text/csv")
+        c1, c2 = st.columns(2)
 
-# ── footer ─────────────────────────────────────────────────────────────────────
+        resumen = pd.DataFrame([{
+            'Simulacro':  st.session_state['simulacro'],
+            'Nivel':      st.session_state['nivel'],
+            'Correctas':  r['aciertos'],
+            'Total':      r['total'],
+            'Porcentaje': f"{r['pct']:.1f}%",
+            'Inicio':     r['inicio'].strftime('%d/%m/%Y %H:%M:%S'),
+            'Fin':        r['fin'].strftime('%d/%m/%Y %H:%M:%S'),
+            'Duración':   f"{r['minutos']}m {r['segundos']}s",
+        }])
+        with c1:
+            st.download_button(
+                "📄 Descargar Resumen",
+                resumen.to_csv(index=False),
+                f"resumen_{st.session_state['simulacro']}_N{st.session_state['nivel']}_{ts}.csv",
+                "text/csv",
+            )
+        with c2:
+            st.download_button(
+                "📊 Descargar Detalle",
+                r['detalle'].to_csv(index=False),
+                f"detalle_{st.session_state['simulacro']}_N{st.session_state['nivel']}_{ts}.csv",
+                "text/csv",
+            )
+
+# ── Footer ─────────────────────────────────────────────────────────────────────
 st.divider()
-st.caption("📁 Simulacros desde SIMULACROS/ · columnas: PREGUNTA, SESION, RESPUESTA, AREA  (M / L / S / N / I)")
+st.caption("📁 Simulacros desde SIMULACROS/  ·  columnas requeridas: PREGUNTA, SESION, RESPUESTA, AREA  (M / L / S / N / I)")
