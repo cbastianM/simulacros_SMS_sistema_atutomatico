@@ -205,57 +205,68 @@ with tab_q:
 
 with tab_r:
     st.subheader("✏️ Registrar respuestas")
-    st.caption(
-        "Edita la columna **Tu Respuesta** directamente en la tabla (A / B / C / D). "
-        "Deja en blanco las que aún no hayas respondido — cada cambio se guarda en la sesión."
-    )
+    st.caption("Escribe el número de pregunta, selecciona tu respuesta y presiona **Registrar**.")
 
-    # ── Construir tabla editable desde session_state ──────────────────────────
-    # La columna 'Tu Respuesta' se rellena con lo ya guardado; None = sin respuesta aún.
-    tabla_editor = pd.DataFrame({
-        'Nº':           [i + 1                          for i in range(n_total)],
-        'Área':         [AREA_LABEL[prueba.iloc[i]['AREA']]  for i in range(n_total)],
-        'Sesión':       [str(prueba.iloc[i]['SESION'])   for i in range(n_total)],
-        'Pregunta':     [str(prueba.iloc[i]['PREGUNTA']) for i in range(n_total)],
-        'Tu Respuesta': [respuestas.get(i, None)         for i in range(n_total)],
-    })
+    # ── Formulario de ingreso ─────────────────────────────────────────────────
+    with st.container(border=True):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            num_inp = st.number_input(
+                "Número de pregunta",
+                min_value=1, max_value=n_total, step=1,
+                key="inp_num",
+            )
+        with c2:
+            resp_inp = st.selectbox("Respuesta", ["A", "B", "C", "D"], key="inp_resp")
+        with c3:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            if st.button("✔ Registrar", use_container_width=True, type="primary"):
+                st.session_state['respuestas'][int(num_inp) - 1] = resp_inp
+                st.rerun()
 
-    edited = st.data_editor(
-        tabla_editor,
-        column_config={
-            'Nº':           st.column_config.NumberColumn('Nº',           disabled=True, width='small'),
-            'Área':         st.column_config.TextColumn('Área',           disabled=True),
-            'Sesión':       st.column_config.TextColumn('Sesión',         disabled=True),
-            'Pregunta':     st.column_config.TextColumn('Pregunta',       disabled=True),
-            'Tu Respuesta': st.column_config.SelectboxColumn(
-                'Tu Respuesta',
-                options=['A', 'B', 'C', 'D'],
-                required=False,
-                width='medium',
-            ),
-        },
-        hide_index=True,
-        use_container_width=True,
-        height=min(60 + 35 * n_total, 650),
-        key='editor_respuestas',
-    )
-
-    # ── Sincronizar cambios al dict persistente ───────────────────────────────
-    changed = False
-    for i, val in enumerate(edited['Tu Respuesta']):
-        if val and val != respuestas.get(i):
-            st.session_state['respuestas'][i] = val
-            changed = True
-        elif not val and i in st.session_state['respuestas']:
-            del st.session_state['respuestas'][i]
-            changed = True
-    if changed:
-        respuestas = st.session_state['respuestas']
-
-    # ── Progreso ──────────────────────────────────────────────────────────────
+    # ── Tabla de respuestas registradas (solo lectura) ────────────────────────
     n_respon = len(respuestas)
     st.markdown(f"**Progreso: {n_respon} / {n_total}**")
     st.progress(n_respon / n_total if n_total else 0)
+
+    if respuestas:
+        entries = []
+        for idx in sorted(respuestas.keys()):
+            row = prueba.iloc[idx]
+            entries.append({
+                'Nº':           idx + 1,
+                'Área':         AREA_LABEL[row['AREA']],
+                'Sesión':       str(row['SESION']),
+                'Pregunta':     str(row['PREGUNTA']),
+                'Tu Respuesta': respuestas[idx],
+            })
+        st.dataframe(
+            pd.DataFrame(entries),
+            use_container_width=True,
+            hide_index=True,
+            height=min(60 + 35 * len(entries), 500),
+        )
+
+        # ── Eliminar / corregir ───────────────────────────────────────────────
+        with st.expander("🗑️ Eliminar una respuesta"):
+            cd1, cd2 = st.columns([3, 1])
+            with cd1:
+                del_num = st.number_input(
+                    "Número de pregunta a eliminar",
+                    min_value=1, max_value=n_total, step=1,
+                    key="del_num",
+                )
+            with cd2:
+                st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+                if st.button("🗑️ Eliminar", use_container_width=True):
+                    idx_del = int(del_num) - 1
+                    if idx_del in st.session_state['respuestas']:
+                        del st.session_state['respuestas'][idx_del]
+                        st.rerun()
+                    else:
+                        st.warning(f"La pregunta {del_num} no tiene respuesta registrada.")
+    else:
+        st.info("Aún no has registrado ninguna respuesta.")
 
     # ── Botón calificar ───────────────────────────────────────────────────────
     st.divider()
