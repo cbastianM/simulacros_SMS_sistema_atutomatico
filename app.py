@@ -164,6 +164,23 @@ with tab_q:
         "Resuélvelas en tu cuadernillo y luego registra tus respuestas en la pestaña **✏️ Mis Respuestas**."
     )
 
+    # ── Botón guardar ─────────────────────────────────────────────────────────
+    todas_q = pd.DataFrame({
+        'Nº':       [i + 1                              for i in range(n_total)],
+        'Área':     [AREA_LABEL[prueba.iloc[i]['AREA']]  for i in range(n_total)],
+        'Sesión':   [str(prueba.iloc[i]['SESION'])        for i in range(n_total)],
+        'Pregunta': [str(prueba.iloc[i]['PREGUNTA'])      for i in range(n_total)],
+    })
+    ts_q = datetime.now().strftime('%Y%m%d_%H%M%S')
+    st.download_button(
+        label="💾 Guardar listado de preguntas",
+        data=todas_q.to_csv(index=False),
+        file_name=f"preguntas_{st.session_state['simulacro']}_N{st.session_state['nivel']}_{ts_q}.csv",
+        mime="text/csv",
+    )
+
+    st.divider()
+
     for a in AREA_CODES:
         mask    = prueba['AREA'] == a
         indices = prueba.index[mask].tolist()   # índices 0-based en `prueba`
@@ -173,28 +190,12 @@ with tab_q:
         subset = prueba.loc[indices]
         st.markdown(f"### {AREA_LABEL[a]}")
 
-        # Cabecera de columnas
-        col_n, col_s, col_p, col_resp = st.columns([1, 2, 2, 2])
-        col_n.markdown("**Nº**")
-        col_s.markdown("**Sesión**")
-        col_p.markdown("**Pregunta**")
-        col_resp.markdown("**Registrada**")
-
-        for idx in indices:
-            row  = prueba.loc[idx]
-            num  = idx + 1                                   # número 1-based para el usuario
-            resp = respuestas.get(idx, "—")
-            col_n, col_s, col_p, col_resp = st.columns([1, 2, 2, 2])
-            col_n.write(f"**{num}**")
-            col_s.write(str(row['SESION']))
-            col_p.write(str(row['PREGUNTA']))
-            if resp == "—":
-                col_resp.write("—")
-            else:
-                col_resp.markdown(
-                    f"<span style='color:#1976D2;font-weight:bold'>{resp}</span>",
-                    unsafe_allow_html=True,
-                )
+        tabla_q = pd.DataFrame({
+            'Nº':       [i + 1 for i in indices],
+            'Sesión':   [str(prueba.loc[i, 'SESION'])    for i in indices],
+            'Pregunta': [str(prueba.loc[i, 'PREGUNTA'])  for i in indices],
+        })
+        st.dataframe(tabla_q, use_container_width=True, hide_index=True)
 
         st.divider()
 
@@ -205,77 +206,56 @@ with tab_q:
 with tab_r:
     st.subheader("✏️ Registrar respuestas")
     st.caption(
-        "Ingresa el número de pregunta y tu respuesta. "
-        "Puedes hacerlo en cualquier orden y en cualquier momento — "
-        "tus respuestas se guardan aunque refresques la página (mientras la sesión esté activa)."
+        "Edita la columna **Tu Respuesta** directamente en la tabla (A / B / C / D). "
+        "Deja en blanco las que aún no hayas respondido — cada cambio se guarda en la sesión."
     )
 
-    # ── Formulario de ingreso ─────────────────────────────────────────────────
-    with st.container(border=True):
-        st.markdown("##### ➕ Nueva respuesta")
-        c1, c2, c3 = st.columns([2, 2, 1])
-        with c1:
-            num_inp = st.number_input(
-                "Número de pregunta",
-                min_value=1, max_value=n_total, step=1,
-                key="inp_num",
-                help=f"Entre 1 y {n_total}",
-            )
-        with c2:
-            resp_inp = st.selectbox(
-                "Respuesta",
-                ["A", "B", "C", "D"],
-                key="inp_resp",
-            )
-        with c3:
-            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-            agregar = st.button("✔ Registrar", use_container_width=True, type="primary")
+    # ── Construir tabla editable desde session_state ──────────────────────────
+    # La columna 'Tu Respuesta' se rellena con lo ya guardado; None = sin respuesta aún.
+    tabla_editor = pd.DataFrame({
+        'Nº':           [i + 1                          for i in range(n_total)],
+        'Área':         [AREA_LABEL[prueba.iloc[i]['AREA']]  for i in range(n_total)],
+        'Sesión':       [str(prueba.iloc[i]['SESION'])   for i in range(n_total)],
+        'Pregunta':     [str(prueba.iloc[i]['PREGUNTA']) for i in range(n_total)],
+        'Tu Respuesta': [respuestas.get(i, None)         for i in range(n_total)],
+    })
 
-    if agregar:
-        st.session_state['respuestas'][int(num_inp) - 1] = resp_inp
-        st.rerun()
+    edited = st.data_editor(
+        tabla_editor,
+        column_config={
+            'Nº':           st.column_config.NumberColumn('Nº',           disabled=True, width='small'),
+            'Área':         st.column_config.TextColumn('Área',           disabled=True),
+            'Sesión':       st.column_config.TextColumn('Sesión',         disabled=True),
+            'Pregunta':     st.column_config.TextColumn('Pregunta',       disabled=True),
+            'Tu Respuesta': st.column_config.SelectboxColumn(
+                'Tu Respuesta',
+                options=['A', 'B', 'C', 'D'],
+                required=False,
+                width='medium',
+            ),
+        },
+        hide_index=True,
+        use_container_width=True,
+        height=min(60 + 35 * n_total, 650),
+        key='editor_respuestas',
+    )
 
-    # ── Tabla de respuestas registradas ──────────────────────────────────────
-    st.markdown(f"**Progreso: {n_respon}/{n_total}**")
+    # ── Sincronizar cambios al dict persistente ───────────────────────────────
+    changed = False
+    for i, val in enumerate(edited['Tu Respuesta']):
+        if val and val != respuestas.get(i):
+            st.session_state['respuestas'][i] = val
+            changed = True
+        elif not val and i in st.session_state['respuestas']:
+            del st.session_state['respuestas'][i]
+            changed = True
+    if changed:
+        respuestas = st.session_state['respuestas']
+
+    # ── Progreso ──────────────────────────────────────────────────────────────
+    n_respon = len(respuestas)
+    st.markdown(f"**Progreso: {n_respon} / {n_total}**")
     st.progress(n_respon / n_total if n_total else 0)
-
-    if respuestas:
-        entries = []
-        for idx in sorted(respuestas.keys()):
-            row = prueba.iloc[idx]
-            entries.append({
-                'Nº':           idx + 1,
-                'Área':         AREA_LABEL[row['AREA']],
-                'Sesión':       str(row['SESION']),
-                'Pregunta':     str(row['PREGUNTA']),
-                'Tu Respuesta': respuestas[idx],
-            })
-        df_resp = pd.DataFrame(entries)
-        st.dataframe(df_resp, use_container_width=True, hide_index=True, height=min(60 + 35 * len(entries), 500))
-
-        # ── Borrar una respuesta ──────────────────────────────────────────────
-        with st.expander("🗑️ Eliminar o corregir una respuesta"):
-            cd1, cd2 = st.columns([3, 1])
-            with cd1:
-                del_num = st.number_input(
-                    "Número de pregunta a eliminar",
-                    min_value=1, max_value=n_total, step=1,
-                    key="del_num",
-                )
-            with cd2:
-                st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-                eliminar = st.button("🗑️ Eliminar", use_container_width=True)
-
-            if eliminar:
-                idx_del = int(del_num) - 1
-                if idx_del in st.session_state['respuestas']:
-                    del st.session_state['respuestas'][idx_del]
-                    st.success(f"Respuesta de la pregunta {del_num} eliminada.")
-                    st.rerun()
-                else:
-                    st.warning(f"La pregunta {del_num} no tiene respuesta registrada.")
-    else:
-        st.info("Aún no has registrado ninguna respuesta.")
 
     # ── Botón calificar ───────────────────────────────────────────────────────
     st.divider()
