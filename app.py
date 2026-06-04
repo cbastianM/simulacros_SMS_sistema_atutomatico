@@ -285,6 +285,9 @@ with tab_r:
     if faltantes > 0:
         st.warning(f"⚠️ Faltan **{faltantes}** respuesta(s) para poder calificar.")
 
+    if st.session_state.get('calificado'):
+        st.success('✅ Simulacro calificado correctamente')
+
     calificar = st.button(
         "📊 Calificar",
         use_container_width=True,
@@ -294,6 +297,7 @@ with tab_r:
     )
 
     if calificar and faltantes == 0:
+        st.session_state['calificado'] = False
         fin      = datetime.now()
         duracion = fin - inicio
         minutos  = int(duracion.total_seconds() // 60)
@@ -342,6 +346,7 @@ with tab_r:
             'segundos':   segundos,
         }
         st.session_state['ir_a_resultados'] = True
+        st.session_state['calificado'] = True
         st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -353,8 +358,6 @@ with tab_result:
         st.info("Completa todas las respuestas y presiona **📊 Calificar** en la pestaña anterior.")
     else:
         r = st.session_state['resultado']
-
-        st.success("✅ Simulacro calificado correctamente")
 
         # ── Tiempo ────────────────────────────────────────────────────────────
         st.subheader("⏱️ Tiempo")
