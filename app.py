@@ -254,13 +254,15 @@ with tab_r:
             key='editor_respuestas',
         )
 
-        for _, row in edited.iterrows():
-            idx = int(row['Nº']) - 1
-            val = row['Tu Respuesta']
-            if val and val in ['A', 'B', 'C', 'D']:
-                st.session_state['respuestas'][idx] = val
-            elif not val and idx in st.session_state['respuestas']:
-                del st.session_state['respuestas'][idx]
+        if st.button("💾 Guardar respuestas", type="primary", use_container_width=True):
+            for _, row in edited.iterrows():
+                idx = int(row['Nº']) - 1
+                val = row['Tu Respuesta']
+                if val and val in ['A', 'B', 'C', 'D']:
+                    st.session_state['respuestas'][idx] = val
+                elif not val and idx in st.session_state['respuestas']:
+                    del st.session_state['respuestas'][idx]
+            st.rerun()
 
         respuestas = st.session_state['respuestas']
         n_respon   = len(respuestas)
