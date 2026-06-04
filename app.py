@@ -277,15 +277,28 @@ with tab_r:
     if faltantes > 0:
         st.warning(f"⚠️ Faltan **{faltantes}** respuesta(s) para poder calificar.")
 
-    calificar = st.button(
+    if st.button(
         "📊 Calificar",
         use_container_width=True,
         type="primary",
         disabled=(faltantes > 0),
         key="btn_calificar",
-    )
+    ):
+        st.session_state['confirmar_calificar'] = True
 
-    if calificar and faltantes == 0:
+    confirmar = False
+    if st.session_state.get('confirmar_calificar') and faltantes == 0:
+        st.warning("¿Estás seguro de que quieres calificar? Revisa que todas tus respuestas estén correctas.")
+        col_si, col_no = st.columns(2)
+        with col_si:
+            confirmar = st.button("✅ Sí, calificar", use_container_width=True, type="primary", key="btn_si")
+        with col_no:
+            if st.button("❌ Cancelar", use_container_width=True, key="btn_no"):
+                st.session_state["confirmar_calificar"] = False
+                st.rerun()
+
+    if st.session_state.get('confirmar_calificar') and faltantes == 0 and confirmar:
+        st.session_state["confirmar_calificar"] = False
         fin      = datetime.now()
         duracion = fin - inicio
         minutos  = int(duracion.total_seconds() // 60)
